@@ -49,10 +49,6 @@ reproducer at **https://github.com/urbit/vere/issues/1100** (same class as the
 older, unresolved #490). Until it is fixed there, any conn.sock client is a
 loaded gun, and urbtop is a conn.sock client.
 
-While developing this tool it took a production ship down twice: once from a
-probe killed mid-reply, once from `pkill` of urbtop while an ordinary reply was
-in flight.
-
 ### Precautions urbtop takes
 
 - One persistent conn.sock connection for the life of the process, with
@@ -71,8 +67,7 @@ in flight.
 
 ### What the precautions do not cover
 
-Be honest with yourself about this part. The drain only runs if urbtop gets a
-chance to run it. These will still disconnect with replies owed and can still
+The drain only runs if urbtop gets a chance to run it. These will still disconnect with replies owed and can still
 crash the ship:
 
 - `kill -9`, an OOM kill, or the host rebooting or losing power while a reply
