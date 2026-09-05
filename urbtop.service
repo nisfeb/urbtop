@@ -1,0 +1,20 @@
+[Unit]
+Description=urbtop dashboard for an Urbit ship
+After=network.target
+
+[Service]
+# Edit PIER / LOG / flags for your ship. Bind to localhost or a private address: there is no auth.
+Environment=PIER=%h/piers/sampel-palnet
+Environment=LOG=%h/urbtop/console.log
+WorkingDirectory=%h/urbtop
+ExecStart=/usr/bin/python3 %h/urbtop/urbtop.py ${PIER} --bind 127.0.0.1 --port 9909 --log ${LOG} --mass-interval 1800
+# SIGTERM makes urbtop wait for every outstanding conn.sock reply before it closes the socket.
+# A hard kill while a reply is owed can segfault the king on vere 4.6, so give it time.
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=900
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

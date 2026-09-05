@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>urbtop</title>
+<style>
+:root{--bg:#0b0e14;--panel:#121722;--line:#1f2736;--fg:#d6dbe5;--dim:#7b8597;--acc:#7cc4ff;--ok:#5fd68a;--warn:#f2c14e;--bad:#ff6b6b;--mut:#2a3345;color-scheme:dark}
+*{box-sizing:border-box;scrollbar-color:#2a3345 #0e121a;scrollbar-width:thin}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-track{background:#0e121a}::-webkit-scrollbar-thumb{background:#2a3345;border-radius:4px}::-webkit-scrollbar-thumb:hover{background:#3a4660}
+body{margin:0;background:var(--bg);color:var(--fg);font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+header{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:baseline;padding:8px 14px;border-bottom:1px solid var(--line);background:#0e121a;position:sticky;top:0;z-index:5}
+header .ship{font-size:18px;color:var(--acc);font-weight:600}
+header .kv{color:var(--dim)} header .kv b{color:var(--fg);font-weight:500}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--bad);margin-right:6px;vertical-align:middle}
+.dot.on{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:10px;padding:10px 14px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;min-width:0;overflow:hidden}
+section.wide{grid-column:1/-1}
+section.two{grid-column:span 2}
+@media(max-width:760px){section.two{grid-column:auto}}
+h2{margin:0 0 6px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);display:flex;justify-content:space-between;align-items:center;gap:8px}
+h2 .sub{letter-spacing:0;text-transform:none;color:var(--dim);font-weight:400;text-align:right}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;color:var(--dim);font-weight:500;border-bottom:1px solid var(--line);padding:2px 6px 2px 0;white-space:nowrap;position:sticky;top:0;background:var(--panel);cursor:pointer;user-select:none}
+th:hover{color:var(--fg)} th.sorted{color:var(--acc)}
+td{padding:2px 6px 2px 0;border-bottom:1px solid #161c28;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:420px}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+td.wrap{white-space:normal;max-width:220px}
+.scroll{max-height:320px;overflow:auto}
+.big{font-size:20px;font-weight:600;line-height:1.1}
+.stat{display:inline-block;margin:0 14px 6px 0;vertical-align:top}
+.stat .l{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+.bar{height:8px;background:var(--mut);border-radius:3px;overflow:hidden;margin:3px 0}
+.bar i{display:block;height:100%;background:var(--acc)}
+.bar i.warn{background:var(--warn)} .bar i.bad{background:var(--bad)} .bar i.ok{background:var(--ok)}
+canvas{display:block;width:100%;height:44px}
+.chip{display:inline-block;padding:1px 6px;margin:2px 3px 2px 0;border-radius:3px;background:var(--mut);color:var(--fg)}
+.chip.dead{background:#3a1d1d;color:#ffb3b3}
+.ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .dim{color:var(--dim)}
+button{background:var(--mut);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:2px 8px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--acc)}
+pre{margin:0;white-space:pre-wrap;word-break:break-all;font:11px/1.35 ui-monospace,Menlo,Consolas,monospace;color:#b9c1cf}
+.tree div{padding-left:14px} .tree .row{display:flex;gap:8px;align-items:center;cursor:pointer;padding:1px 0}
+.tree .row .nm{flex:0 0 220px;overflow:hidden;text-overflow:ellipsis} .tree .row .sz{flex:0 0 80px;text-align:right;color:var(--dim)}
+.tree .row .bar{flex:1;margin:0}
+.tree .kids{display:none} .tree .open>.kids{display:block}
+.tree .tog{width:10px;color:var(--dim)}
+.errs{color:var(--bad);font-size:11px}
+</style>
+</head>
+<body>
+<header id="hdr"><span class="ship">urbtop</span><span class="kv">connecting…</span></header>
+<main id="main"></main>
+<script>
+const $ = (s)=>document.querySelector(s);
+const esc = (s)=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtB = (b)=>{ if(b==null) return '–'; const u=['B','K','M','G','T']; let i=0; b=Number(b); while(b>=1024&&i<u.length-1){b/=1024;i++} return (i?b.toFixed(b<10?2:1):b)+u[i]; };
+const fmtN = (n)=> n==null?'–':Number(n).toLocaleString();
+const fmtDur = (s)=>{ if(s==null||isNaN(s)) return '–'; const neg=s<0; s=Math.abs(s); const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60), sec=Math.floor(s%60);
+  let out = d?`${d}d${h}h`: h?`${h}h${m}m`: m?`${m}m${sec}s`: s<10?`${s.toFixed(1)}s`:`${sec}s`; return (neg?'-':'')+out; };
+const fmtT = (t)=> t==null?'–':new Date(t*1000).toLocaleString(undefined,{hour12:false});
+const ago = (t,now)=> t==null?'–':fmtDur(now-t)+' ago';
+const pct = (a,b)=> b? (100*a/b).toFixed(1)+'%':'–';
+function bar(frac,cls){ frac=Math.max(0,Math.min(1,frac||0)); cls=cls||(frac>.9?'bad':frac>.7?'warn':''); return `<div class="bar"><i class="${cls}" style="width:${(frac*100).toFixed(1)}%"></i></div>`; }
+function stat(l,v,sub){ return `<div class="stat"><div class="l">${l}</div><div class="big">${v}</div>${sub?`<div class="dim">${sub}</div>`:''}</div>`; }
+function spark(id){ return `<canvas id="${id}"></canvas>`; }
+function drawSpark(id,data,color,opts){ const c=document.getElementById(id); if(!c) return; opts=opts||{};
+  const W=c.clientWidth||300,H=c.clientHeight||44; if(c.width!==W*2){c.width=W*2;c.height=H*2;} const g=c.getContext('2d'); g.setTransform(2,0,0,2,0,0); g.clearRect(0,0,W,H);
+  if(!data||data.length<2) return; let max=opts.max!=null?opts.max:Math.max(...data), min=opts.min!=null?opts.min:Math.min(...data); if(max===min){max=min+1;}
+  const n=data.length, step=W/(Math.max(n,60)-1); g.beginPath();
+  data.forEach((v,i)=>{ const x=i*step, y=H-2-(v-min)/(max-min)*(H-6); i?g.lineTo(x,y):g.moveTo(x,y); });
+  g.strokeStyle=color; g.lineWidth=1.5; g.stroke(); g.lineTo((n-1)*step,H); g.lineTo(0,H); g.closePath(); g.fillStyle=color+'22'; g.fill();
+  g.fillStyle='#7b8597'; g.font='10px monospace'; g.textAlign='right'; g.fillText((opts.fmt||String)(max),W-2,10); g.fillText((opts.fmt||String)(data[n-1]),W-2,H-3);
+}
+function lsGet(k,d){ try{ return JSON.parse(localStorage.getItem(k))??d; }catch(e){ return d; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
+let open = new Set(lsGet('urbtop.open',[]));
+function massTree(node,path,depth){ const p=path+'/'+node.name; const kids=node.children||[]; const isOpen=open.has(p)||depth<1;
+  const total=window.__massTotal||node.size||1;
+  return `<div class="${isOpen?'open':''}" data-p="${esc(p)}"><div class="row" onclick="tog(this)"><span class="tog">${kids.length?(isOpen?'▾':'▸'):''}</span><span class="nm" title="${esc(p)}">${esc(node.name)}</span><span class="sz">${fmtB(node.size)}</span>${bar(node.size/total,'')}</div>
+   ${kids.length?`<div class="kids">${kids.map(k=>massTree(k,p,depth+1)).join('')}</div>`:''}</div>`; }
+function tog(el){ const box=el.parentElement; box.classList.toggle('open'); const p=box.dataset.p; box.classList.contains('open')?open.add(p):open.delete(p); lsSet('urbtop.open',[...open]); el.querySelector('.tog').textContent=box.classList.contains('open')?'▾':'▸'; }
+function infoTree(node,depth){ if(node.value!==undefined) return `<tr><td style="padding-left:${depth*12}px">${esc(node.name)}</td><td class="n">${esc(typeof node.value==='number'?fmtN(node.value):node.value)}</td></tr>`;
+  return `<tr><td style="padding-left:${depth*12}px" class="dim">${esc(node.name)}</td><td></td></tr>`+(node.children||[]).map(c=>infoTree(c,depth+1)).join(''); }
+function kelvinShort(k){ if(!k) return ''; const parts=k.split(',').map(x=>x.trim()); if(parts.length<=2) return k; const nums=parts.map(x=>+x.split(' ').pop()).sort((a,b)=>b-a); return `${parts[0].split(' ')[0]} ${nums[0]}–${nums[nums.length-1]} (${nums.length})`; }
+function last(a){ return a&&a.length?a[a.length-1]:null; }
+
+// ---- sortable tables: click a header to sort, click again to flip; remembered per table
+const sorts = lsGet('urbtop.sort',{});
+function table(id,cols,rows,defKey,defDir){
+  const st=sorts[id]||{k:defKey,d:defDir||1}; const col=cols.find(c=>c.k===st.k);
+  if(col){ rows=rows.slice().sort((a,b)=>{ let x=a[st.k],y=b[st.k]; const nx=x==null, ny=y==null; if(nx&&ny) return 0; if(nx) return 1; if(ny) return -1;
+    if(typeof x==='number'||typeof y==='number') return (x-y)*st.d; return String(x).localeCompare(String(y))*st.d; }); }
+  return `<table><thead><tr>${cols.map(c=>`<th class="${c.num?'n':''} ${st.k===c.k?'sorted':''}" onclick="sortBy('${id}','${c.k}',${c.num?-1:1})" title="sort by ${c.label}">${c.label}${st.k===c.k?(st.d>0?' ▲':' ▼'):''}</th>`).join('')}</tr></thead><tbody>
+   ${rows.map(r=>`<tr>${cols.map(c=>`<td class="${c.num?'n ':''}${c.cls?c.cls(r):''}"${c.title?` title="${esc(c.title(r))}"`:''}>${c.fmt?c.fmt(r):esc(r[c.k]??'')}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+function sortBy(id,k,first){ const st=sorts[id]||{}; sorts[id]={k, d: st.k===k ? -(st.d||1) : first}; lsSet('urbtop.sort',sorts); if(S) render(S,true); }
+
+// ---- rendering: panels keep their DOM node; a panel is re-painted only when its HTML changed,
+// and nothing is painted while the user is scrolling (that was the jerkiness).
+let S=null, lastScroll=0, pending=false; const painted={};
+addEventListener('scroll',()=>{lastScroll=Date.now();},{capture:true,passive:true});
+async function tick(){
+  try{ const r=await fetch('/api/state',{cache:'no-store'}); S=await r.json(); render(S); }
+  catch(e){ $('#hdr').innerHTML=`<span class="ship">urbtop</span><span class="kv bad">backend unreachable: ${esc(e.message)}</span>`; }
+}
+function render(s,force){
+  if(!force && Date.now()-lastScroll<600){ if(!pending){ pending=true; setTimeout(()=>{pending=false; if(S) render(S);},700); } return; }
+  const now=s.ts||Date.now()/1000; const h=s.hist||{}; const pr=s.procs||{}; const serf=pr.serf||{}, king=pr.king||{};
+  const j=s.jael||{}; const q=s.quic||{}; const m=s.mass; const loom=s.loom||(m&&findQ(m.tree,'loom'))||2**31;
+  const marked=m&&findQ(m.tree,'total marked'); const lastMass=m?m.ts:null;
+  document.title=`urbtop ${s.who||''}`;
+  $('#hdr').innerHTML=`<span class="dot ${s.live?'on':''}"></span><span class="ship">${esc(s.who||'?')}</span>
+   <span class="kv">${esc(s.clan||'')}${j.fake?' <b class="warn">fake</b>':''} · life <b>${esc(j.life??'–')}</b> rift <b>${esc(j.rift??'–')}</b> · sponsor <b>${esc(j.sein||'–')}</b></span>
+   <span class="kv">vere <b>${esc(s.vere||'–')}</b> · base <b>${esc((s.clay&&s.clay.desks&&s.clay.desks.base&&s.clay.desks.base.kelvin)||'–')}</b></span>
+   <span class="kv">event <b>${fmtN(s.event)}</b> · <b>${(last(h.events)??0).toFixed(1)}</b> ev/s</span>
+   <span class="kv">serf up <b>${fmtDur(serf.uptime)}</b> · snapshot <b>${ago(s.pier&&s.pier.chk_mtime,now)}</b> · |mass <b>${ago(lastMass,now)}</b></span>
+   <span class="kv">tick <b>${s.tick_ms}ms</b> · ${new Date(now*1000).toLocaleTimeString(undefined,{hour12:false})}</span>
+   ${Object.keys(s.errors||{}).length?`<span class="errs">⚠ ${Object.entries(s.errors).map(([k,v])=>esc(k+': '+v)).join(' · ')}</span>`:''}`;
+
+  const timers=(s.behn&&s.behn.timers)||[]; const byVane=(s.behn&&s.behn.by_vane)||{}; const timerCount=(s.behn&&s.behn.count)||timers.length;
+  const peers=(s.ames&&s.ames.peers)||[]; const known=peers.filter(p=>p.state==='known'); const am=s.ames||{}; const peerCount=am.peer_count??peers.length; const knownCount=am.known_count??known.length;
+  const recent=known.filter(p=>p.last_contact&&now-p.last_contact<3600).length;
+  const agents=(s.gall&&s.gall.agents)||[]; const desks=(s.clay&&s.clay.desks)||{};
+  const ey=s.eyre||{}; const host=s.host||{}; const pier=s.pier||{};
+
+  const panels=[];
+  const panel=(id,cls,html)=>panels.push({id,cls,html});
+  panel('runtime','two',`<h2>runtime <span class="sub">king pid ${king.pid||'–'} · serf pid ${serf.pid||'–'}</span></h2>
+    ${stat('serf cpu',(serf.cpu??0)+'%',`${serf.threads||0} thr · ${serf.fds??'–'} fds`)}
+    ${stat('king cpu',(king.cpu??0)+'%',`${king.threads||0} thr · ${king.fds??'–'} fds`)}
+    ${stat('serf rss',fmtB(serf.rss),`hwm ${fmtB((serf.VmHWM||0)*1024)} · swap ${fmtB((serf.VmSwap||0)*1024)}`)}
+    ${stat('king rss',fmtB(king.rss),`io r ${fmtB(king.read_bytes)} w ${fmtB(king.write_bytes)}`)}
+    ${stat('faults',fmtN(serf.majflt),`major · ${fmtN(serf.minflt)} minor`)}
+    ${stat('ctx switches',fmtN(serf.voluntary_ctxt_switches),`vol · ${fmtN(serf.nonvoluntary_ctxt_switches)} invol`)}
+    <div class="dim">serf cpu %</div>${spark('sp_cpu')}<div class="dim">events / s</div>${spark('sp_ev')}<div class="dim">serf rss</div>${spark('sp_rss')}`);
+
+  panel('loom','',`<h2>loom <span class="sub">${fmtB(loom)} mapped</span></h2>
+    ${stat('free',fmtB(q.open),`idle ${fmtB(q.idle)} · sampled with |mass`)}
+    ${stat('marked (|mass)',marked?fmtB(marked):'–',m?`free lists ${fmtB(findQ(m.tree,'free lists'))}`:'no report yet')}
+    <div class="dim">in use ${pct(loom-(q.open||0),loom)}</div>${bar((loom-(q.open||0))/loom)}
+    <div class="dim">loom free (per |mass)</div>${spark('sp_loom')}
+    <div class="dim">host load ${(host.load||[]).map(x=>x.toFixed(2)).join(' ')} · ${host.ncpu} cpu · mem ${fmtB((host.mem_total||0)-(host.mem_avail||0))} / ${fmtB(host.mem_total)}</div>${bar(((host.mem_total||0)-(host.mem_avail||0))/(host.mem_total||1))}
+    ${spark('sp_load')}`);
+
+  panel('pier','',`<h2>pier <span class="sub" title="${esc(pier.path)}">${esc((pier.path||'').split('/').pop())}</span></h2>
+    ${stat('event log',fmtB(pier.log_bytes),`epochs ${(pier.epochs||[]).join(', ')}`)}
+    ${stat('snapshot',fmtB(pier.chk_bytes),`written ${ago(pier.chk_mtime,now)}`)}
+    ${stat('disk free',fmtB(pier.disk_free),`of ${fmtB(pier.disk_total)}`)}
+    ${bar(1-(pier.disk_free||0)/(pier.disk_total||1))}
+    <div class="dim">ports: ames ${s.ports&&s.ports.ames} · http ${s.ports&&s.ports.http||'–'} · https ${s.ports&&s.ports.htls||'–'} · eyre ${esc(ey.host||'')}</div>
+    <div class="dim">galaxy chain ${(j.saxo||[]).join(' → ')||'–'} · turf ${(j.turf||[]).join(', ')||'none'} · terminal sessions ${((s.dill||{}).sessions||[]).join(', ')}</div>`);
+
+  const trows=timers.map(t=>({...t, due:t.at-now, ductStr:t.duct.slice(1).join(' ‹ ')}));
+  panel('behn','two',`<h2>behn timers <span class="sub">${timerCount} pending${timerCount>timers.length?' (soonest '+timers.length+' shown)':''} · ${Object.entries(byVane).map(([k,v])=>k+' '+v).join(' · ')}</span></h2>
+    ${spark('sp_timers')}<div class="scroll" data-box="behn">${table('behn',[
+      {k:'due',label:'due',num:true,fmt:r=>fmtDur(r.due),cls:r=>r.due<0?'bad':r.due<10?'warn':''},
+      {k:'at',label:'at',fmt:r=>fmtT(r.at),cls:()=>'dim'},
+      {k:'vane',label:'vane'},
+      {k:'wire',label:'wire',title:r=>r.wire},
+      {k:'ductStr',label:'duct',cls:()=>'dim'}],trows,'due',1)}</div>`);
+
+  panel('ames','two',`<h2>ames <span class="sub">${peerCount} peers · ${knownCount} known · ${Object.entries(am.by_clan||{}).map(([k,v])=>v+' '+k).join(', ')}${peerCount>peers.length?' · detail for '+peers.length:''} · ${recent} heard &lt;1h · rift ${am.rift} · proto ${am.protocol} · chums ${am.chums??'–'} · snub ${am.snub?am.snub.form+' '+am.snub.ships.length:'–'}</span></h2>
+    ${spark('sp_peers')}<div class="scroll" data-box="ames">${table('ames',[
+      {k:'ship',label:'ship'},
+      {k:'clan',label:'rank',cls:()=>'dim'},
+      {k:'state',label:'state',cls:r=>r.state==='known'?'ok':'warn'},
+      {k:'last_contact',label:'last contact',num:true,fmt:r=>ago(r.last_contact,now),cls:r=>r.last_contact&&now-r.last_contact<300?'ok':'dim'},
+      {k:'snd',label:'snd',num:true},{k:'rcv',label:'rcv',num:true},{k:'corked',label:'corked',num:true},{k:'closing',label:'closing',num:true}],peers,'last_contact',-1)}</div>`);
+
+  const drows=Object.entries(desks).map(([n,d])=>({...d, desk:n, agents:(d.bill||[]).length, docket:d.title?d.title+' '+(d.version||''):'', src:d.sync||'local'}));
+  panel('clay','two',`<h2>clay desks <span class="sub">${Object.keys(desks).length} desks · ${((s.kiln||{}).syncs||[]).length} syncs</span></h2>
+    <div class="scroll" data-box="clay">${table('clay',[
+      {k:'desk',label:'desk',fmt:r=>`<b>${esc(r.desk)}</b>`},
+      {k:'zest',label:'zest',fmt:r=>esc(r.zest)+(r.wic&&r.wic.length?' <span class="dim">wic '+esc(r.wic.join(' '))+'</span>':''),cls:r=>r.zest==='live'?'ok':r.zest==='dead'?'bad':'warn'},
+      {k:'rev',label:'rev',num:true,fmt:r=>fmtN(r.rev)},
+      {k:'rev_at',label:'committed',num:true,fmt:r=>ago(r.rev_at,now),cls:()=>'dim'},
+      {k:'kelvin',label:'kelvin',fmt:r=>esc(kelvinShort(r.kelvin)),title:r=>r.kelvin||''},
+      {k:'hash',label:'hash',cls:()=>'dim'},
+      {k:'src',label:'source',cls:()=>'dim'},
+      {k:'docket',label:'docket',cls:()=>'dim'},
+      {k:'agents',label:'bill',num:true,fmt:r=>r.agents+' agents',title:r=>(r.bill||[]).join(' '),cls:()=>'dim'}],drows,'desk',1)}</div>`);
+
+  const byDesk={}; agents.forEach(a=>(byDesk[a.desk]=byDesk[a.desk]||[]).push(a));
+  panel('gall','two',`<h2>gall agents <span class="sub">${agents.filter(a=>a.live).length} live · ${agents.filter(a=>!a.live).length} suspended</span></h2>
+    ${spark('sp_agents')}<div class="scroll" data-box="gall">${Object.entries(byDesk).sort().map(([d,as])=>`<div><span class="dim">${esc(d)}</span> ${as.map(a=>`<span class="chip ${a.live?'':'dead'}" title="subscription nonce ${a.nonce??'?'}">${esc(a.name)}${a.nonce>1?` <span class="dim">·${a.nonce}</span>`:''}</span>`).join('')}</div>`).join('')}</div>
+    <div class="dim">spider threads (${(s.spider||[]).length}): ${(s.spider||[]).map(t=>`<span class="chip" title="${esc(t)}">${esc(t.slice(0,18))}…</span>`).join('')||'none'}</div>`);
+
+  const brows=(ey.bindings||[]).map(b=>({...b, owner:(b.duct[0]||'').split('/').slice(1,4).join('/')}));
+  panel('eyre','two',`<h2>eyre <span class="sub">${brows.length} bindings · ${ey.connections??0} open http · cors ${ey.cors?ey.cors.approved.length+' ok / '+ey.cors.requests.length+' pending / '+ey.cors.rejected.length+' rejected':'–'}</span></h2>
+    ${spark('sp_chan')}<div class="scroll" data-box="eyre">${table('eyre',[
+      {k:'site',label:'site',cls:()=>'dim'},{k:'path',label:'path'},{k:'action',label:'action'},{k:'owner',label:'owner',cls:()=>'dim'}],brows,'path',1)}
+    ${ey.cors&&ey.cors.requests.length?`<div class="dim">cors pending: ${ey.cors.requests.map(esc).join(', ')}</div>`:''}</div>`);
+
+  window.__massTotal=m?m.tree.size:1;
+  panel('mass','wide',`<h2>memory (|mass) <span class="sub">${m?`${fmtB(m.tree.size)} total · took ${m.took_ms}ms · ${ago(m.ts,now)}`:'no report yet'} <button onclick="runMass()">run |mass now</button></span></h2>
+    ${m?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">${m.tree.children.slice(0,8).map(c=>`<span class="chip">${esc(c.name)} <b>${fmtB(c.size)}</b></span>`).join('')}</div><div class="tree scroll" data-box="mass" style="max-height:480px">${m.tree.children.map(c=>massTree(c,'',0)).join('')}</div>`:'<div class="dim">|mass runs on an interval (or press the button); it walks the whole loom and pauses the ship while it does.</div>'}`);
+
+  panel('log','two',`<h2>ship console <span class="sub">${(s.log||[]).length?'last '+(s.log||[]).length+' lines':'no --log configured'}</span></h2><div class="scroll" data-box="log" id="logbox" style="max-height:360px"><pre>${(s.log||[]).map(esc).join('\n')}</pre></div>`);
+  panel('info','',`<h2>vere /info</h2><div class="scroll" data-box="info"><table>${s.info?infoTree(s.info,0):''}</table></div>`);
+
+  // paint: keep section nodes, replace innerHTML only when changed, keep every scroll box where it was
+  const main=$('#main'); const logbox=$('#logbox'); const logAtBottom=!logbox||logbox.scrollTop+logbox.clientHeight>=logbox.scrollHeight-4;
+  panels.forEach(p=>{
+    let sec=document.getElementById('p_'+p.id);
+    if(!sec){ sec=document.createElement('section'); sec.id='p_'+p.id; sec.className=p.cls; main.appendChild(sec); }
+    if(painted[p.id]===p.html) return;
+    const pos={}; sec.querySelectorAll('[data-box]').forEach(b=>pos[b.dataset.box]=[b.scrollTop,b.scrollLeft]);
+    sec.innerHTML=p.html; painted[p.id]=p.html;
+    sec.querySelectorAll('[data-box]').forEach(b=>{ const v=pos[b.dataset.box]; if(v){ b.scrollTop=v[0]; b.scrollLeft=v[1]; } });
+  });
+  if(logAtBottom){ const b=$('#logbox'); if(b) b.scrollTop=b.scrollHeight; }
+  drawSpark('sp_cpu',h.cpu_serf,'#7cc4ff',{min:0,max:Math.max(100,...(h.cpu_serf||[0])),fmt:v=>v+'%'});
+  drawSpark('sp_ev',h.events,'#5fd68a',{min:0,fmt:v=>Number(v).toFixed(1)});
+  drawSpark('sp_rss',h.rss_serf,'#f2c14e',{fmt:fmtB});
+  drawSpark('sp_loom',h.loom_open,'#7cc4ff',{fmt:fmtB});
+  drawSpark('sp_load',h.load,'#7b8597',{min:0,fmt:v=>Number(v).toFixed(2)});
+  drawSpark('sp_timers',h.timers,'#f2c14e',{min:0});
+  drawSpark('sp_peers',h.peers,'#7cc4ff',{min:0});
+  drawSpark('sp_agents',h.agents,'#5fd68a',{min:0});
+  drawSpark('sp_chan',h.channels,'#7cc4ff',{min:0});
+}
+function findQ(node,name){ if(!node) return null; if(node.name===name) return node.size; for(const c of node.children||[]){ const r=findQ(c,name); if(r!=null) return r; } return null; }
+async function runMass(){ await fetch('/api/mass',{method:'POST'}); }
+tick(); setInterval(tick,2000);
+</script>
+</body>
+</html>
