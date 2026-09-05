@@ -12,6 +12,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:12px/1.4 ui-monospace,SF
 header{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:baseline;padding:8px 14px;border-bottom:1px solid var(--line);background:#0e121a;position:sticky;top:0;z-index:5}
 header .ship{font-size:18px;color:var(--acc);font-weight:600}
 header .kv{color:var(--dim)} header .kv b{color:var(--fg);font-weight:500}
+header .rt{margin-left:auto}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--bad);margin-right:6px;vertical-align:middle}
 .dot.on{background:var(--ok);box-shadow:0 0 6px var(--ok)}
 main{display:grid;grid-template-columns:repeat(var(--cols,3),minmax(0,1fr));gap:10px;padding:10px 14px;align-items:start}
@@ -200,7 +201,7 @@ function render(s,force){
    <span class="kv">event <b>${fmtN(s.event)}</b> · <b>${(last(h.events)??0).toFixed(1)}</b> ev/s</span>
    <span class="kv">serf up <b>${fmtDur(serf.uptime)}</b> · snapshot <b>${ago(s.pier&&s.pier.chk_mtime,now)}</b> · |mass <b>${ago(lastMass,now)}</b></span>
    <span class="kv">tick <b>${s.tick_ms}ms</b> · ${new Date(now*1000).toLocaleTimeString(undefined,{hour12:false})}</span>
-   <span class="kv"><button onclick="resetLayout()" title="restore the default panel order and sizes">reset layout</button></span>
+   <span class="kv rt"><button onclick="resetLayout()" title="restore the default panel order and sizes">reset layout</button></span>
    ${Object.keys(s.errors||{}).length?`<span class="errs">⚠ ${Object.entries(s.errors).map(([k,v])=>esc(k+': '+v)).join(' · ')}</span>`:''}`;
 
   const timers=(s.behn&&s.behn.timers)||[]; const byVane=(s.behn&&s.behn.by_vane)||{}; const timerCount=(s.behn&&s.behn.count)||timers.length;
