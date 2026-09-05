@@ -84,6 +84,21 @@ against that ship, or run it only while you are watching. Test on a fake ship
 first; the shapes and sizes of scry replies differ a lot between fake and real
 ships.
 
+## Arranging the page
+
+Panels can be rearranged and kept that way:
+
+- **Reorder**: drag a panel by its title bar onto another panel.
+- **Resize**: drag the grip in a panel's bottom-right corner. Width snaps to
+  grid columns; height is free. A resized panel scrolls its own body, so making
+  one taller shows more rows.
+- **Sort**: click any table header. Click again to reverse.
+- **Reset**: the "reset layout" button in the header restores the defaults.
+
+Layout, sort order, and the expanded rows of the `|mass` tree live in the
+browser's localStorage, so they are per-browser and survive reloads and
+redeploys. They are not shared between machines.
+
 ## Running as a service
 
 `urbtop.service` is a systemd user unit (edit PIER/LOG/flags at the top):

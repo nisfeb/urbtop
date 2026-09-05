@@ -45,6 +45,17 @@ the whole reply before it is sent, so a huge peek also stalls the ship.
 5. Render it in `urbtop.html` inside a `panel(...)` call. Use `table(...)` for
    tabular data so it sorts. Panels repaint only when their HTML changes.
 
+`panel(id, cls, html)` takes an html string starting with `<h2>`; everything
+after the heading is wrapped in a `.body` block automatically. `cls` is only a
+default width (`two`, `wide`, or empty) that the user can override by dragging.
+
+Each panel keeps its own `<section>` across repaints, keyed by id, so layout
+and scroll positions survive. Anything you attach to the section itself rather
+than to its innerHTML must be re-attached in `decorate()`, which runs after
+every repaint. Layout, sort, and mass-tree state persist under the
+`urbtop.layout`, `urbtop.sort`, and `urbtop.open` localStorage keys; changing
+their shape should tolerate stale values (see `lsGet`).
+
 ## Running against a real ship
 
 - Use `urbtop.service` (systemd user unit) so stops are SIGTERM with a long

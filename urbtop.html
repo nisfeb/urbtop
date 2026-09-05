@@ -14,12 +14,15 @@ header .ship{font-size:18px;color:var(--acc);font-weight:600}
 header .kv{color:var(--dim)} header .kv b{color:var(--fg);font-weight:500}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--bad);margin-right:6px;vertical-align:middle}
 .dot.on{background:var(--ok);box-shadow:0 0 6px var(--ok)}
-main{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:10px;padding:10px 14px}
-section{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;min-width:0;overflow:hidden}
-section.wide{grid-column:1/-1}
-section.two{grid-column:span 2}
-@media(max-width:760px){section.two{grid-column:auto}}
-h2{margin:0 0 6px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);display:flex;justify-content:space-between;align-items:center;gap:8px}
+main{display:grid;grid-template-columns:repeat(var(--cols,3),minmax(0,1fr));gap:10px;padding:10px 14px;align-items:start}
+section{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;min-width:0;overflow:hidden;position:relative;display:flex;flex-direction:column}
+section.dragging{opacity:.4;outline:1px dashed var(--acc)}
+section.drop{outline:1px solid var(--acc)}
+.rz{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;touch-action:none;z-index:2}
+.rz::after{content:"";position:absolute;right:3px;bottom:3px;width:7px;height:7px;border-right:2px solid var(--mut);border-bottom:2px solid var(--mut)}
+.rz:hover::after{border-color:var(--acc)}
+h2{margin:0 0 6px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:grab;flex:0 0 auto}
+h2:active{cursor:grabbing}
 h2 .sub{letter-spacing:0;text-transform:none;color:var(--dim);font-weight:400;text-align:right}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;color:var(--dim);font-weight:500;border-bottom:1px solid var(--line);padding:2px 6px 2px 0;white-space:nowrap;position:sticky;top:0;background:var(--panel);cursor:pointer;user-select:none}
@@ -27,7 +30,10 @@ th:hover{color:var(--fg)} th.sorted{color:var(--acc)}
 td{padding:2px 6px 2px 0;border-bottom:1px solid #161c28;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:420px}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 td.wrap{white-space:normal;max-width:220px}
-.scroll{max-height:320px;overflow:auto}
+.scroll{max-height:320px;overflow:auto;min-height:0}
+.scroll.tall{max-height:440px}
+.body{flex:1 1 auto;min-height:0;overflow:auto}
+section.sized .scroll{max-height:none}
 .big{font-size:20px;font-weight:600;line-height:1.1}
 .stat{display:inline-block;margin:0 14px 6px 0;vertical-align:top}
 .stat .l{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
@@ -97,9 +103,86 @@ function table(id,cols,rows,defKey,defDir){
 }
 function sortBy(id,k,first){ const st=sorts[id]||{}; sorts[id]={k, d: st.k===k ? -(st.d||1) : first}; lsSet('urbtop.sort',sorts); if(S) render(S,true); }
 
+// ---- layout: drag a panel's title to reorder, drag its corner to resize.
+//      order is a CSS `order` per section; width snaps to grid columns.
+const DEF_SPAN={two:2,wide:99};
+let layout=lsGet('urbtop.layout',{order:[],span:{},height:{}});
+const defSpan={};
+let dragId=null;
+
+function applyLayout(){
+  const main=$('#main');
+  const cols=Math.max(1,Math.min(6,Math.floor((main.clientWidth+10)/350)));
+  main.style.setProperty('--cols',cols);
+  main.__cols=cols;
+  for ( const sec of main.children ) {
+    const id=sec.id.slice(2);
+    if(!layout.order.includes(id)) layout.order.push(id);
+    sec.style.order=layout.order.indexOf(id);
+    sec.style.gridColumn='span '+Math.max(1,Math.min(cols,layout.span[id]??defSpan[id]??1));
+    const hgt=layout.height[id];
+    sec.style.height=hgt?hgt+'px':'';
+    sec.classList.toggle('sized',!!hgt);
+  }
+}
+function saveLayout(){ lsSet('urbtop.layout',layout); }
+function resetLayout(){ layout={order:[],span:{},height:{}}; saveLayout(); painted={}; if(S) render(S,true); }
+
+function decorate(sec,id){
+  const h2=sec.querySelector('h2');
+  if(h2){
+    h2.draggable=true;
+    h2.title='drag to reorder';
+    h2.addEventListener('dragstart',e=>{
+      dragId=id; e.dataTransfer.effectAllowed='move';
+      e.dataTransfer.setData('text/plain',id); sec.classList.add('dragging');
+    });
+    h2.addEventListener('dragend',()=>{
+      dragId=null; sec.classList.remove('dragging');
+      for ( const s of $('#main').children ) s.classList.remove('drop');
+      saveLayout();
+    });
+  }
+  const rz=document.createElement('div');
+  rz.className='rz'; rz.title='drag to resize';
+  rz.addEventListener('pointerdown',e=>startResize(e,sec,id));
+  sec.appendChild(rz);
+}
+
+function startResize(e,sec,id){
+  e.preventDefault(); e.stopPropagation();
+  const main=$('#main'), cols=main.__cols||3;
+  const colw=(main.clientWidth-10*(cols-1))/cols;
+  const box=sec.getBoundingClientRect();
+  const move=ev=>{
+    layout.span[id]=Math.max(1,Math.min(cols,Math.round((ev.clientX-box.left+10)/(colw+10))));
+    layout.height[id]=Math.max(120,Math.round(ev.clientY-box.top));
+    applyLayout();
+  };
+  const up=()=>{
+    removeEventListener('pointermove',move); removeEventListener('pointerup',up); saveLayout();
+  };
+  addEventListener('pointermove',move); addEventListener('pointerup',up);
+}
+
+addEventListener('dragover',e=>{
+  if(!dragId) return;
+  e.preventDefault();
+  const over=e.target.closest && e.target.closest('section');
+  if(!over) return;
+  const overId=over.id.slice(2);
+  if(overId===dragId) return;
+  const from=layout.order.indexOf(dragId), to=layout.order.indexOf(overId);
+  if(from<0||to<0) return;
+  layout.order.splice(from,1); layout.order.splice(to,0,dragId);
+  applyLayout();
+});
+addEventListener('drop',e=>{ if(dragId) e.preventDefault(); });
+addEventListener('resize',()=>applyLayout());
+
 // ---- rendering: panels keep their DOM node; a panel is re-painted only when its HTML changed,
 // and nothing is painted while the user is scrolling (that was the jerkiness).
-let S=null, lastScroll=0, pending=false; const painted={};
+let S=null, lastScroll=0, pending=false, painted={};
 addEventListener('scroll',()=>{lastScroll=Date.now();},{capture:true,passive:true});
 async function tick(){
   try{ const r=await fetch('/api/state',{cache:'no-store'}); S=await r.json(); render(S); }
@@ -117,6 +200,7 @@ function render(s,force){
    <span class="kv">event <b>${fmtN(s.event)}</b> · <b>${(last(h.events)??0).toFixed(1)}</b> ev/s</span>
    <span class="kv">serf up <b>${fmtDur(serf.uptime)}</b> · snapshot <b>${ago(s.pier&&s.pier.chk_mtime,now)}</b> · |mass <b>${ago(lastMass,now)}</b></span>
    <span class="kv">tick <b>${s.tick_ms}ms</b> · ${new Date(now*1000).toLocaleTimeString(undefined,{hour12:false})}</span>
+   <span class="kv"><button onclick="resetLayout()" title="restore the default panel order and sizes">reset layout</button></span>
    ${Object.keys(s.errors||{}).length?`<span class="errs">⚠ ${Object.entries(s.errors).map(([k,v])=>esc(k+': '+v)).join(' · ')}</span>`:''}`;
 
   const timers=(s.behn&&s.behn.timers)||[]; const byVane=(s.behn&&s.behn.by_vane)||{}; const timerCount=(s.behn&&s.behn.count)||timers.length;
@@ -126,7 +210,10 @@ function render(s,force){
   const ey=s.eyre||{}; const host=s.host||{}; const pier=s.pier||{};
 
   const panels=[];
-  const panel=(id,cls,html)=>panels.push({id,cls,html});
+  const panel=(id,cls,html)=>{
+    const i=html.indexOf('</h2>')+5;   //  body is a block: keeps .stat inline-flow inside a flex section
+    panels.push({id,cls,html:html.slice(0,i)+'<div class="body">'+html.slice(i)+'</div>'});
+  };
   panel('runtime','two',`<h2>runtime <span class="sub">king pid ${king.pid||'–'} · serf pid ${serf.pid||'–'}</span></h2>
     ${stat('serf cpu',(serf.cpu??0)+'%',`${serf.threads||0} thr · ${serf.fds??'–'} fds`)}
     ${stat('king cpu',(king.cpu??0)+'%',`${king.threads||0} thr · ${king.fds??'–'} fds`)}
@@ -195,21 +282,24 @@ function render(s,force){
 
   window.__massTotal=m?m.tree.size:1;
   panel('mass','wide',`<h2>memory (|mass) <span class="sub">${m?`${fmtB(m.tree.size)} total · took ${m.took_ms}ms · ${ago(m.ts,now)}`:'no report yet'} <button onclick="runMass()">run |mass now</button></span></h2>
-    ${m?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">${m.tree.children.slice(0,8).map(c=>`<span class="chip">${esc(c.name)} <b>${fmtB(c.size)}</b></span>`).join('')}</div><div class="tree scroll" data-box="mass" style="max-height:480px">${m.tree.children.map(c=>massTree(c,'',0)).join('')}</div>`:'<div class="dim">|mass runs on an interval (or press the button); it walks the whole loom and pauses the ship while it does.</div>'}`);
+    ${m?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">${m.tree.children.slice(0,8).map(c=>`<span class="chip">${esc(c.name)} <b>${fmtB(c.size)}</b></span>`).join('')}</div><div class="tree scroll tall" data-box="mass">${m.tree.children.map(c=>massTree(c,'',0)).join('')}</div>`:'<div class="dim">|mass runs on an interval (or press the button); it walks the whole loom and pauses the ship while it does.</div>'}`);
 
-  panel('log','two',`<h2>ship console <span class="sub">${(s.log||[]).length?'last '+(s.log||[]).length+' lines':'no --log configured'}</span></h2><div class="scroll" data-box="log" id="logbox" style="max-height:360px"><pre>${(s.log||[]).map(esc).join('\n')}</pre></div>`);
+  panel('log','two',`<h2>ship console <span class="sub">${(s.log||[]).length?'last '+(s.log||[]).length+' lines':'no --log configured'}</span></h2><div class="scroll tall" data-box="log" id="logbox"><pre>${(s.log||[]).map(esc).join('\n')}</pre></div>`);
   panel('info','',`<h2>vere /info</h2><div class="scroll" data-box="info"><table>${s.info?infoTree(s.info,0):''}</table></div>`);
 
   // paint: keep section nodes, replace innerHTML only when changed, keep every scroll box where it was
   const main=$('#main'); const logbox=$('#logbox'); const logAtBottom=!logbox||logbox.scrollTop+logbox.clientHeight>=logbox.scrollHeight-4;
   panels.forEach(p=>{
+    defSpan[p.id]=DEF_SPAN[p.cls]||1;
     let sec=document.getElementById('p_'+p.id);
-    if(!sec){ sec=document.createElement('section'); sec.id='p_'+p.id; sec.className=p.cls; main.appendChild(sec); }
+    if(!sec){ sec=document.createElement('section'); sec.id='p_'+p.id; main.appendChild(sec); }
     if(painted[p.id]===p.html) return;
     const pos={}; sec.querySelectorAll('[data-box]').forEach(b=>pos[b.dataset.box]=[b.scrollTop,b.scrollLeft]);
     sec.innerHTML=p.html; painted[p.id]=p.html;
     sec.querySelectorAll('[data-box]').forEach(b=>{ const v=pos[b.dataset.box]; if(v){ b.scrollTop=v[0]; b.scrollLeft=v[1]; } });
+    decorate(sec,p.id);
   });
+  applyLayout();
   if(logAtBottom){ const b=$('#logbox'); if(b) b.scrollTop=b.scrollHeight; }
   drawSpark('sp_cpu',h.cpu_serf,'#7cc4ff',{min:0,max:Math.max(100,...(h.cpu_serf||[0])),fmt:v=>v+'%'});
   drawSpark('sp_ev',h.events,'#5fd68a',{min:0,fmt:v=>Number(v).toFixed(1)});
