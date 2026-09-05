@@ -36,31 +36,58 @@ Everything comes through the pier's `.urb/conn.sock`:
 Process and disk numbers come from `/proc` and the pier directory.
 Nothing goes through the dojo, %lens, or eyre.
 
-## Warning: conn.sock clients can crash the king
+## Warning: this can crash your ship
 
-On vere 4.6, if a client disconnects while conn.c still owes it a reply, the
-king prints `newt: write failed broken pipe` / `conn: moor bail -32 broken pipe`
-and can segfault (`loom: external fault` in `u3_king_commence`). This took a
-production ship down twice on 2026-09-05 during development: once from a probe
-killed mid-reply (it had asked for eyre's `channel-state`, which is enormous on
-a real ship), once from `pkill` of urbtop while a normal reply was in flight.
-(Reported upstream; related to urbit/vere#490.)
+Read this before pointing urbtop at a ship you care about.
 
-urbtop therefore:
+On vere 4.6, if a conn.sock client disconnects while the ship still owes it a
+reply, the king prints `newt: write failed broken pipe` / `conn: moor bail -32
+broken pipe` and can segfault (`loom: external fault` in `u3_king_commence`).
+The event log is not damaged, but the ship goes down until someone restarts
+it. The bug is in vere, not in the ship's state, and is reported with a
+reproducer at **https://github.com/urbit/vere/issues/1100** (same class as the
+older, unresolved #490). Until it is fixed there, any conn.sock client is a
+loaded gun, and urbtop is a conn.sock client.
 
-- keeps ONE conn.sock connection for the life of the process, with replies
-  matched by request id, so it never closes a socket mid-conversation;
-- never drops the connection on a slow reply: a timed-out request is simply
-  ignored when its reply finally arrives;
-- on SIGTERM/SIGINT waits for every outstanding reply (up to 15 minutes, `|mass`
-  can be slow) before closing the socket and exiting;
-- never requests known-huge nouns (`channel-state`, `//whey`, `domes`) and caps
-  timers/peers before sending them to the browser.
+While developing this tool it took a production ship down twice: once from a
+probe killed mid-reply, once from `pkill` of urbtop while an ordinary reply was
+in flight.
 
-Stop it with SIGTERM (`systemctl --user stop urbtop`, or `kill PID`), never
-`kill -9`. A hard kill, an OOM kill, or a host crash while a reply is owed is
-still a risk on a ship you care about; use `urbtop.service` so stops are
-orderly. If you add a peek, measure its reply size on a fake ship first.
+### Precautions urbtop takes
+
+- One persistent conn.sock connection for the life of the process, with
+  replies matched by request id. It never opens and closes a socket per
+  request, so there is no routine disconnect for the bug to bite on.
+- A slow reply never causes a disconnect. A request that times out on our side
+  is left owed and consumed when it finally arrives.
+- On SIGTERM or SIGINT it stops issuing requests, waits for every outstanding
+  reply (up to 15 minutes; `|mass` can be slow), and only then closes the
+  socket and exits.
+- It never asks for nouns known to be enormous on real ships (eyre
+  `channel-state`, anything `//whey`, clay `domes`/`sweep`), and caps timers
+  and peers before they reach the browser.
+- `urbtop.service` stops it with SIGTERM and a 15 minute grace period so a
+  systemd stop is always an orderly drain.
+
+### What the precautions do not cover
+
+Be honest with yourself about this part. The drain only runs if urbtop gets a
+chance to run it. These will still disconnect with replies owed and can still
+crash the ship:
+
+- `kill -9`, an OOM kill, or the host rebooting or losing power while a reply
+  is in flight;
+- urbtop itself crashing on an unexpected noun shape mid-request (it is
+  wrapped in try/except per call, but a bug is a bug);
+- any other conn.sock client on the same ship that does not follow these rules
+  (this includes `click` scripts interrupted with Ctrl-C).
+
+The window is small in steady state, a few milliseconds per request every two
+seconds, and large during `|mass`, which can take seconds on a big loom. If a
+crash would be worse for you than not having the dashboard, do not run it
+against that ship, or run it only while you are watching. Test on a fake ship
+first; the shapes and sizes of scry replies differ a lot between fake and real
+ships.
 
 ## Running as a service
 
