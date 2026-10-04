@@ -16,7 +16,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CLK = os.sysconf('SC_CLK_TCK')
 HIST = 240          # samples kept per sparkline
 FAST = 2.0          # seconds between cheap ticks
-SLOW = 12.0         # seconds between the heavier scry sweep
+SLOW = 12.0         # default seconds between the heavier scry sweep (--slow-interval)
+RECHECK = 10        # sweeps between re-reads of a desk kiln gives no hash for
 
 _UV = '0123456789abcdefghijklmnopqrstuv'
 def uv(n):
@@ -273,11 +274,14 @@ def tail_lines(fn, n=300, maxbytes=256 * 1024):
 # ------------------------------------------------------------ collector
 
 class Collector:
-    def __init__(self, pier, log, mass_interval):
+    def __init__(self, pier, log, mass_interval, slow_interval=SLOW):
         self.pier = os.path.abspath(pier)
         self.ship = Ship(self.pier)
         self.log = log
         self.mass_interval = mass_interval
+        self.slow_interval = slow_interval
+        # desk -> (kiln hash or None, rev/kelvin/bill/docket fields, sweeps left)
+        self.desk_meta = {}
         self.state = {'ts': 0, 'errors': {}}
         self.hist = collections.defaultdict(lambda: collections.deque(maxlen=HIST))
         self.prev = {}
@@ -296,7 +300,7 @@ class Collector:
         while True:
             t0 = time.time()
             self.fast_tick()
-            if t0 - last_slow >= SLOW:
+            if t0 - last_slow >= self.slow_interval:
                 self.slow_tick(); last_slow = t0
             self.state['ts'] = time.time()
             self.state['tick_ms'] = int((time.time() - t0) * 1000)
@@ -449,22 +453,36 @@ class Collector:
                 d['sync'] = '%s/%s' % (patp(sync[0]), cord(sync[1])) if sync is not None else None
                 d['hash'] = uv(pk[1][0])[:12]
                 d.setdefault('zest', cord(pk[1][1][0]))
+            # The four reads per desk below change only when the desk does, and
+            # %cw alone took about 0.25 s a desk on a fake ship, every sweep. So
+            # they are kept while the desk's content hash (kiln's pike, %cz) is
+            # unchanged. A desk kiln gives no hash for is read again every
+            # RECHECK sweeps. An empty commit moves rev without moving the hash,
+            # so rev can lag until the next real change.
             for name, d in desks.items():
+                kept = self.desk_meta.get(name)
+                if kept and kept[0] == d.get('hash') and (kept[0] is not None or kept[2] > 0):
+                    d.update(kept[1])
+                    self.desk_meta[name] = (kept[0], kept[1], kept[2] - 1)
+                    continue
+                meta = {}
                 try:
                     c = sh.peekn('cw', name)
-                    if c is not None: d['rev'], d['rev_at'] = c[0], da(c[1])
+                    if c is not None: meta['rev'], meta['rev_at'] = c[0], da(c[1])
                     k = sh.peekn('cx', name, 'sys', 'kelvin')
                     if k is not None:   # weft [%zuse 408] or waft [[%1 ~] (set weft)]
                         wefts = [k] if isinstance(k[0], int) else unset(k[1]) if k[0] == (1, 0) else lst(k)
-                        d['kelvin'] = ', '.join('%s %d' % (cord(w[0]), w[1]) for w in sorted(wefts, key=lambda w: -w[1]))
+                        meta['kelvin'] = ', '.join('%s %d' % (cord(w[0]), w[1]) for w in sorted(wefts, key=lambda w: -w[1]))
                     b = sh.peekn('cx', name, 'desk', 'bill')
-                    d['bill'] = [cord(x) for x in lst(b)] if b is not None else []
+                    meta['bill'] = [cord(x) for x in lst(b)] if b is not None else []
                     dk = sh.peekn('cx', name, 'desk', 'docket-0')
                     if dk is not None:   # [%1 title info color href image version website license]
                         f = fields(dk[1], 8)
-                        d['title'] = cord(f[0]); d['version'] = '.'.join(str(x) for x in fields(f[5], 3))
+                        meta['title'] = cord(f[0]); meta['version'] = '.'.join(str(x) for x in fields(f[5], 3))
+                    self.desk_meta[name] = (d.get('hash'), meta, RECHECK)
                 except Exception as e:
-                    d['error'] = str(e)
+                    meta['error'] = str(e)
+                d.update(meta)
             st['clay'] = {'desks': desks}
             syncs = sh.peekn('gx', 'hood', 'kiln', 'syncs', 'noun')
             st['kiln'] = {'syncs': [{'desk': cord(k[0]), 'from': '%s/%s' % (patp(k[1][0]), cord(k[1][1])),
@@ -617,10 +635,11 @@ def main():
     ap.add_argument('--bind', default='127.0.0.1')
     ap.add_argument('--log', help='file receiving the ship\'s console output (e.g. via tmux pipe-pane)')
     ap.add_argument('--mass-interval', type=int, default=300, help='seconds between |mass reports; 0 = manual only')
+    ap.add_argument('--slow-interval', type=float, default=SLOW, help='seconds between the heavier scry sweep (desks, agents, peers, eyre)')
     a = ap.parse_args()
     if not os.path.exists(os.path.join(a.pier, '.urb', 'conn.sock')):
         sys.exit('no conn.sock under %s/.urb — is the ship running?' % a.pier)
-    col = Collector(a.pier, a.log, a.mass_interval)
+    col = Collector(a.pier, a.log, a.mass_interval, a.slow_interval)
     Handler.col = col
     threading.Thread(target=col.run, daemon=True).start()
     srv = ThreadingHTTPServer((a.bind, a.port), Handler)

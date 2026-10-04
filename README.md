@@ -26,7 +26,9 @@ stdlib only, plus a single HTML page. It shows:
 Everything comes through the pier's `.urb/conn.sock`:
 
 - `%peek` = khan namespace reads (scries). These do not create events and do
-  not touch the event log. Each takes a few milliseconds in the serf.
+  not touch the event log. Most take a few milliseconds in the serf. Clay's
+  `%cw` took about a quarter second per desk on a fake ship, so the per-desk
+  reads are kept until the desk's hash changes.
 - `%peel` = runtime metrics (`/info`, `/v`, `/who`, `/port/*`, `/mass`,
   `/quic`). `/mass` is the real `|mass` report as data; it walks the loom and
   pauses the ship for about a second, so it runs on a slow interval (default
@@ -121,6 +123,8 @@ Open http://127.0.0.1:9909/. Use `--bind 0.0.0.0` to expose it (there is no
 auth, put it behind something if you do). `--mass-interval 0` makes `|mass`
 manual only.
 
+`--slow-interval` is the time in seconds between the heavier sweep (desks, agents, peers, eyre), 12 by default. On a big ship the sweep itself costs seconds of serf time, and at 12 seconds it can run back to back. Set it higher there, the way `--mass-interval` is set with the loom in mind: one ship with a 16 GB loom and 6,800 peers runs at 300.
+
 ## Console tail
 
 Vere prints to the terminal it was started in, so to get the "ship console"
@@ -135,7 +139,7 @@ if it runs under systemd (`journalctl -fu urbit -o cat >> file &`).
 
 ## Files
 
-- `urbtop.py`: collector threads (fast tick 2s, slow sweep 12s, mass loop) and
+- `urbtop.py`: collector threads (fast tick 2s, slow sweep 12s by default, mass loop) and
   the HTTP server (`/` page, `/api/state` JSON, `POST /api/mass`).
 - `urbtop.html`: the page. Polls `/api/state` every 2s, draws sparklines on
   canvas, keeps the mass tree fold state in localStorage.

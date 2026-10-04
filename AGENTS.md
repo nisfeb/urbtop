@@ -8,7 +8,7 @@ urbtop is a single-process dashboard for one running Urbit ship. Three files
 matter:
 
 - `urbtop.py`: collector threads plus a stdlib HTTP server. Fast tick (2 s),
-  slow sweep (12 s), and a `|mass` loop. Serves `/`, `/api/state`, `POST /api/mass`.
+  slow sweep (12 s by default, `--slow-interval`), and a `|mass` loop. Serves `/`, `/api/state`, `POST /api/mass`.
 - `urbtop.html`: the page. Vanilla JS, no build step, polls `/api/state`.
 - `noun.py`: jam/cue, newt framing, `@p`/`@da`/`@uv`, treap walking.
   `python3 noun.py` is its self-test.
@@ -41,6 +41,7 @@ the whole reply before it is sent, so a huge peek also stalls the ship.
    `spur` is empty.
 3. Decode it in a small function next to the other decoders; put it in
    `fast_tick` only if it is cheap and changes often, otherwise `slow_tick`.
+   A read per desk goes with the others kept in `desk_meta` until the desk's hash changes, not in a loop that runs every sweep.
 4. Cap anything unbounded before it goes into `state` (see timers and peers).
 5. Render it in `urbtop.html` inside a `panel(...)` call. Use `table(...)` for
    tabular data so it sorts. Panels repaint only when their HTML changes.
